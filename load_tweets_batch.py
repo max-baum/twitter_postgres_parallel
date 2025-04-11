@@ -38,179 +38,6 @@ def remove_nulls(s):
         return s.replace('\x00','\\x00')
 
 
-def get_id_urls(url):
-    '''
-    Given a url, returns the corresponding id in the urls table.
-    If no row exists for the url, then one is inserted automatically.
-    '''
-    sql = sqlalchemy.sql.text('''
-    insert into urls 
-        (url)
-        values
-        (:url)
-    on conflict do nothing
-    returning id_urls
-    ;
-    ''')
-    res = connection.execute(sql,{'url':url}).first()
-    if res is None:
-        sql = sqlalchemy.sql.text('''
-        select id_urls 
-        from urls
-        where
-            url=:url
-        ''')
-        res = connection.execute(sql,{'url':url}).first()
-    id_urls = res[0]
-    return id_urls
-
-
-def batch(iterable, n=1):
-    '''
-    Group an iterable into batches of size n.
-
-    >>> list(batch([1,2,3,4,5], 2))
-    [[1, 2], [3, 4], [5]]
-    >>> list(batch([1,2,3,4,5,6], 2))
-    [[1, 2], [3, 4], [5, 6]]
-    >>> list(batch([1,2,3,4,5], 3))
-    [[1, 2, 3], [4, 5]]
-    >>> list(batch([1,2,3,4,5,6], 3))
-    [[1, 2, 3], [4, 5, 6]]
-    '''
-    l = len(iterable)
-    for ndx in range(0, l, n):
-        yield iterable[ndx:min(ndx + n, l)]
-
-
-def _bulk_insert_sql(table, rows):
-    '''
-    This function generates the SQL for a bulk insert.
-    It is not intended to be called directly,
-    but is a helper for the bulk_insert function.
-    In particular, this function performs all of the work that doesn't require a database connection.
-    We have separated it out into its own function so that we can use doctests to ensure it works correctly.
-    In general, it is a good idea to separate the code that doesn't require a database connection from the code that does.
-
-    The output is a 2-tuple.
-    The first entry is the SQL text, and the second entry is the dictionary of bind parameters.
-
-    >>> _bulk_insert_sql('test', [{'message': 'hello world', 'id': 5}])
-    ('INSERT INTO test (message,id) VALUES (:message0,:id0) ON CONFLICT DO NOTHING', {'message0': 'hello world', 'id0': 5})
-
-    >>> _bulk_insert_sql('test', [{'message': 'hello world', 'id': 5}, {'message': 'goodbye world', 'id':6}])[0]
-    'INSERT INTO test (message,id) VALUES (:message0,:id0),(:message1,:id1) ON CONFLICT DO NOTHING'
-
-    >>> _bulk_insert_sql('test', [{'message': 'hello world', 'id': 5}, {'message': 'goodbye world', 'id':6}])[1]
-    {'message0': 'hello world', 'id0': 5, 'message1': 'goodbye world', 'id1': 6}
-
-    >>> _bulk_insert_sql('test', [{'message': 'hello world', 'id': 5}, {'id':6}])
-    Traceback (most recent call last):
-      ...
-    ValueError: All dictionaries must contain the same keys
-
-    >>> _bulk_insert_sql('test', [])
-    Traceback (most recent call last):
-      ...
-    ValueError: Must be at least one dictionary in the rows variable
-    '''
-    if not rows:
-        raise ValueError('Must be at least one dictionary in the rows variable')
-    else:
-        keys = set(rows[0].keys())
-        for row in rows:
-            if set(row.keys()) != keys:
-                raise ValueError('All dictionaries must contain the same keys')
-    sql = (f'''
-    INSERT INTO {table}
-        ('''
-        +
-        ','.join(keys)
-        +
-        ''')
-        VALUES
-        '''
-        +
-        ','.join([ '('+','.join([f':{key}{i}' for key in keys])+')' for i in range(len(rows))])
-        +
-        '''
-        ON CONFLICT DO NOTHING
-        '''
-        )
-
-
-    binds = { key+str(i):value for i,row in enumerate(rows) for key,value in row.items() }
-    return (' '.join(sql.split()), binds)
-
-
-def bulk_insert(connection, table, rows):
-    '''
-    Insert the data contained in the `rows` variable into the `table` relation.
-    The `rows` variable should be a list of dictionaries,
-    where each dictionary represents the data for an individual row.
-    The keys for each dictionary must be the same.
-    '''
-    if len(rows)==0:
-        return
-    sql, binds = _bulk_insert_sql(table, rows)
-    res = connection.execute(sqlalchemy.sql.text(sql), binds)
-
-
-################################################################################
-# main functions
-################################################################################
-
-
-def insert_tweets(connection, tweets, batch_size=1000):
-    '''
-    Efficiently inserts many tweets into the database.
-    The tweets iterator is chuncked into batches before insertion.
-
-    Args:
-        connection: a sqlalchemy connection to the postgresql db
-        input_tweets: a list of dictionaries representing the json tweet objects
-    '''
-    for i,tweet_batch in enumerate(batch(tweets, batch_size)):
-        print(datetime.datetime.now(),'insert_tweets i=',i)
-        _insert_tweets(connection, tweet_batch)
-
-
-def _insert_tweets(connection,input_tweets):
-    '''
-    Inserts a single batch of tweets into the database.
-
-    NOTE:
-    The Python convention is that functions beginning with an underscore  are internal helper functions.
-    They are not intended to be a stable interface,
-    and so should not be called directly by end users.
-    '''
-
-    # each of these lists will contain dictionaries that represent the rows to be inserted into the table;
-    # the function is divided up into two steps;
-    # in the first step, we loop over the input batch and construct the lists;
-    # in the second step, we actually insert the lists.
-    users = []
-    tweets = []
-    users_unhydrated_from_tweets = []
-    users_unhydrated_from_mentions = []
-    tweet_mentions = []
-    tweet_tags = []
-    tweet_media = []
-    tweet_urls = []
-
-    ######################################## 
-    # STEP 1: generate the lists
-    ######################################## 
-    for tweet in input_tweets:
-
-        ########################################
-        # insert into the users table
-        ########################################
-        if tweet['user']['url'] is None:
-            user_id_urls = None
-        else:
-            user_id_urls = get_id_urls(tweet['user']['url'])
-
         users.append({
             'id_users':tweet['user']['id'],
             'created_at':tweet['user']['created_at'],
@@ -218,7 +45,7 @@ def _insert_tweets(connection,input_tweets):
             'screen_name':remove_nulls(tweet['user']['screen_name']),
             'name':remove_nulls(tweet['user']['name']),
             'location':remove_nulls(tweet['user']['location']),
-            'id_urls':user_id_urls,
+            'url':remove_null(tweet['id']['url']),
             'description':remove_nulls(tweet['user']['description']),
             'protected':tweet['user']['protected'],
             'verified':tweet['user']['verified'],
@@ -312,21 +139,6 @@ def _insert_tweets(connection,input_tweets):
             'source':remove_nulls(tweet.get('source',None)),
             })
 
-        ########################################
-        # insert into the tweet_urls table
-        ########################################
-
-        try:
-            urls = tweet['extended_tweet']['entities']['urls']
-        except KeyError:
-            urls = tweet['entities']['urls']
-
-        for url in urls:
-            id_urls = get_id_urls(url['expanded_url'])
-            tweet_urls.append({
-                'id_tweets':tweet['id'],
-                'id_urls':id_urls,
-                })
 
         ########################################
         # insert into the tweet_mentions table
@@ -381,10 +193,9 @@ def _insert_tweets(connection,input_tweets):
                 media = []
 
         for medium in media:
-            id_urls = get_id_urls(medium['media_url'])
             tweet_media.append({
                 'id_tweets':tweet['id'],
-                'id_urls':id_urls,
+                'url':tweet['url'],
                 'type':medium['type']
                 })
 
@@ -400,7 +211,6 @@ def _insert_tweets(connection,input_tweets):
         bulk_insert(connection, 'tweet_mentions', tweet_mentions)
         bulk_insert(connection, 'tweet_tags', tweet_tags)
         bulk_insert(connection, 'tweet_media', tweet_media)
-        bulk_insert(connection, 'tweet_urls', tweet_urls)
 
         # the tweets data cannot be inserted using the bulk_insert function because
         # the geo column requires special SQL code to generate the column;

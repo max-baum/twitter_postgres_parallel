@@ -187,7 +187,7 @@ def _insert_tweets(connection,input_tweets):
             'screen_name':remove_nulls(tweet['user']['screen_name']),
             'name':remove_nulls(tweet['user']['name']),
             'location':remove_nulls(tweet['user']['location']),
-            'url':remove_nulls(tweet['id']['url']),
+            'url':remove_nulls(tweet['user']['url']),
             'description':remove_nulls(tweet['user']['description']),
             'protected':tweet['user']['protected'],
             'verified':tweet['user']['verified'],
@@ -358,7 +358,7 @@ def _insert_tweets(connection,input_tweets):
     ######################################## 
     # STEP 2: perform the actual SQL inserts
     ######################################## 
-    with connection.begin() as trans:
+    with connection.begin_nested() as trans:
 
         # use the bulk_insert function to insert most of the data
         bulk_insert(connection, 'users', users)

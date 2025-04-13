@@ -24,7 +24,7 @@ CREATE TABLE users (
     name TEXT,
     location TEXT,
     description TEXT,
-    withheld_in_countries VARCHAR(2)[],
+    withheld_in_countries VARCHAR(2)[]
 );
 
 /*
@@ -65,7 +65,7 @@ CREATE TABLE tweet_urls (
     id_tweets BIGINT,
     url TEXT,
     PRIMARY KEY (id_tweets, url),
-    FOREIGN KEY (id_tweets) REFERENCES tweets(id_tweets) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (id_tweets) REFERENCES tweets(id_tweets) DEFERRABLE INITIALLY DEFERRED
 );
 
 
